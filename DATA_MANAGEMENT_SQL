@@ -1,0 +1,140 @@
+-- Section A: Query Data from Two Tables (Staff and Rental)
+
+-- Fetch all records from the 'staff' table.
+SELECT * FROM staff;
+
+-- Fetch rental records for May 2005.
+SELECT * FROM rental
+WHERE rental_date BETWEEN '2005-05-01' AND '2005-05-31';
+
+-- End of Section A
+
+-- Section B: Transformation Function (Combines First and Last Names into Full Name)
+
+-- This function takes a first name and a last name as input and returns the full name.
+CREATE OR REPLACE FUNCTION employee_name(first_name VARCHAR(45), last_name VARCHAR(45))
+    RETURNS text
+    LANGUAGE plpgsql
+AS
+$$
+DECLARE employee_name text;
+BEGIN
+    -- Concatenate the first name and last name with a space in between.
+    SELECT CONCAT(first_name, ' ', last_name) INTO employee_name;
+    RETURN employee_name;
+END;
+$$
+;
+
+-- Test the 'employee_name' function by combining first and last name.
+-- Example: This should return 'Harry Dresden'.
+SELECT employee_name('Harry', 'Dresden');
+
+-- End of Section B
+
+-- Section C: Detailed Table Creation for Rentals Per Employee
+
+-- Drop the existing 'rentals_per_employee_detailed' table if it exists, to avoid conflicts.
+DROP TABLE IF EXISTS rentals_per_employee_detailed;
+
+-- Create a new table to store detailed rental data per employee.
+CREATE TABLE rentals_per_employee_detailed (
+    staff_id integer,               -- Staff ID
+    employee_name text,             -- Full employee name
+    rental_date date,               -- Date of rental
+    customer_id int                 -- Customer ID associated with the rental
+);
+
+-- Verify the table creation by selecting all records from the new table.
+SELECT * FROM rentals_per_employee_detailed;
+
+-- Section C: Summary Table Creation for Total Rentals Per Employee
+
+-- Drop the existing 'rentals_per_employee_summary' table if it exists, to avoid conflicts.
+DROP TABLE IF EXISTS rentals_per_employee_summary;
+
+-- Create a new table to store summarized rental data per employee.
+CREATE TABLE rentals_per_employee_summary (
+    employee_name text,            -- Full employee name
+    total_rentals text             -- Total number of rentals handled by the employee
+);
+
+-- End of Section C
+
+-- Section E: Function and Trigger to Update Summary Table
+
+-- Create a function that updates the 'rentals_per_employee_summary' table after a new entry is inserted.
+CREATE OR REPLACE FUNCTION update_summary_table() RETURNS TRIGGER AS
+$$
+BEGIN
+    -- Delete all existing records from the summary table to refresh the data.
+    DELETE FROM rentals_per_employee_summary;
+
+    -- Insert updated summary data: count the total rentals per employee.
+    INSERT INTO rentals_per_employee_summary (
+        SELECT d.employee_name, COUNT(d.rental_date) AS total_rentals
+        FROM rentals_per_employee_detailed d
+        GROUP BY employee_name
+    );
+
+    -- Return the new record for trigger processing.
+    RETURN new;
+END;
+$$
+LANGUAGE plpgsql;
+
+-- Create a trigger that invokes the 'update_summary_table' function after inserting a new rental record.
+CREATE TRIGGER trig_update
+    AFTER INSERT ON rentals_per_employee_detailed
+    FOR EACH ROW
+    EXECUTE PROCEDURE update_summary_table();
+
+-- End of Section E
+
+-- Section D: Extract Data for Detailed Table (Inserting Data into 'rentals_per_employee_detailed')
+
+-- Insert rental data into 'rentals_per_employee_detailed' by joining 'staff' and 'rental' tables.
+-- Only include records where the rental date is within May 2005.
+INSERT INTO rentals_per_employee_detailed (
+    SELECT s.staff_id, employee_name(s.first_name, s.last_name), r.rental_date, r.customer_id
+    FROM staff s
+    JOIN rental r
+    ON s.staff_id = r.staff_id
+    WHERE rental_date BETWEEN '2005-05-01' AND '2005-05-31'
+);
+
+-- End of Section D
+
+-- Section F: Stored Procedure to Refresh Data
+
+-- Create a stored procedure to delete old data and re-insert updated data into both tables.
+CREATE OR REPLACE PROCEDURE refresh_tables()
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    -- Delete existing records in both tables to refresh the data.
+    DELETE FROM rentals_per_employee_detailed;
+    DELETE FROM rentals_per_employee_summary;
+
+    -- Re-insert detailed rental data for May 2005.
+    INSERT INTO rentals_per_employee_detailed (
+        SELECT s.staff_id, employee_name(s.first_name, s.last_name), r.rental_date, r.customer_id
+        FROM staff s
+        JOIN rental r
+        ON s.staff_id = r.staff_id
+        WHERE rental_date BETWEEN '2005-05-01' AND '2005-05-31'
+    );
+
+    RETURN;
+END
+$$;
+
+-- Test the 'refresh_tables' stored procedure.
+-- This will delete old data and re-insert updated data into the detailed and summary tables.
+CALL refresh_tables();
+
+-- Verify that the data has been refreshed.
+SELECT * FROM rentals_per_employee_detailed;
+SELECT * FROM rentals_per_employee_summary;
+
+-- End of Section F
